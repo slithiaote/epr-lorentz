@@ -1,0 +1,26 @@
+FROM mathworks/matlab:r2020b
+# Add Lepton, Please and easyspin
+
+USER root
+RUN apt-get update && apt-get install -y curl git ocaml xz-utils pip python3-pygments cmake \
+    texlive-latex-recommended texlive-latex-extra texlive-fonts-extra texlive-science \
+    texlive-lang-french texlive-extra-utils texlive-xetex texinfo biber latexmk \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install sympy numpy pandas matplotlib seaborn
+
+# install lepton as root for all users
+RUN git clone https://github.com/slithiaote/lepton.git && \
+    cd lepton && sh make.sh && ln -s /lepton/lepton.bin /usr/local/bin/lepton
+
+# add path to easyspin as root in matlab install folder, required when using a plz sandbox
+RUN sed -i "38 i addpath /home/matlab/easyspin-5.2.35/easyspin" /opt/matlab/R2020b/toolbox/local/startup.m
+
+USER matlab
+
+# install plz as user matlab 
+RUN curl https://get.please.build | bash
+
+# install easyspin as user matlab in home
+RUN cd /home/matlab && curl https://easyspin.org/easyspin-5.2.35.zip > easyspin.zip && unzip easyspin.zip && rm easyspin.zip
+
+WORKDIR /home/matlab/project

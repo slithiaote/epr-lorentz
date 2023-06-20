@@ -1,0 +1,33 @@
+def lepton(name:str, deps, outs) -> str:
+   return genrule(
+      name = name,
+      srcs = [f"{name}.nw"],
+      deps = deps,
+      labels = ["codegen"],
+      outs = [f"{name}.md"] + outs,
+      cmd = f"lepton $SRC -o {name}.md -format_with github",
+      visibility = ["//..."]
+   )
+
+def lepton_outputdir(name:str, deps, outputdir) -> str:
+   return genrule(
+      name = name,
+      srcs = [f"{name}.nw"],
+      deps = deps,
+      labels = ["codegen"],
+      outs = [f"{name}.md"],
+      output_dirs = outputdir,
+      cmd = f"lepton $SRC -o {name}.md -format_with github",
+      visibility = ["//..."]
+   )
+
+def lepton_tex(name:str, deps, outs) -> str:
+   return genrule(
+      name = name,
+      srcs = [f"{name}.nw"],
+      deps = deps,
+      labels = ["codegen"],
+      outs = [f"{name}.pdf"] + outs,
+      cmd = [f"lepton $SRC -o {name}.tex -format_with latex_minted", f"latexmk -pdf -shell-escape {name}.tex -file-line-error"]
+   )
+

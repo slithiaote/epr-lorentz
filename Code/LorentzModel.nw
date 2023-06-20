@@ -1,0 +1,430 @@
+# Lorentz Model with overmodulation for 1D EPR spectra.
+
+This document implements parameter estimation in the general Lorentz model for single-line EPR spectra,
+as presented in [Tran-Duc, Frapart, Li-Thiao-Té 2021](https://doi.org/10.1109/TIM.2021.3084289).
+
+Simulation, and MLE parameter estimation (initial values, MLE, precicision).
+- `LorentzModel_simulate(B,par)` : simulate EPR spectrum from given parameters, returns an EPR spectrum
+- `LorentzModel_initial(B,spec)` : compute initial parameter estimates, returns a `par` struct
+- `LorentzModel_ls(B,spec,par_init)` : estimate parameters starting from initial values, returns a `par` struct
+- `LorentzModel_mleerror(B,par)` : compute estimates of the parameter precision, returns a `par` struct with precisions
+- `LorentzModel(B,spec,par_init)` : convenience function to estimate all parameters, initial parameters are optional, returns a `par` struct with precisions.
+
+where 
+- `B` is the magnetic field or x-axis,
+- `spec` is the EPR spectrum or y-axis,
+- `par` and `par_init` are Matlab structs containing the model parameters:
+  - `par.C` is the double integral
+  - `par.Br` is the resonant magnetic field
+  - `par.FWHM` is Full-Width at Half-Maximum,
+  - `par.MA` is the modulation amplitude,
+  - `par.v` is the standard deviation of the noise.
+
+# Assets
+
+No assets, EPR spectra are generated in silico in this document.
+
+List of files created:
+- `LM_simulate.jpg`: illustrate simulated EPR spectra produced by the Lorentz model.
+- `LM_simulate2.jpg`
+
+# Method 1 : Simulate Lorentz model
+
+We first define the Lorentz lineshape.
+<<LorentzShape.m -write -chunk matlab>>=
+function [spec] = LorentzShape(B)
+  % Normalized Lorentz shape, area=1, width=1
+  spec = (B.^2+1).^(-1) ./ pi;
+end
+@
+
+The general Lorentz model for single-line EPR spectra is obtained by translating, rescaling and applying modulation amplitude
+to the Lorentz lineshape. We define it with the following code.
+
+<<LorentzModel_simulate.m -write -chunk matlab>>=
+function [spec] = LorentzModel_simulate(B,par)
+  % LorentzModel with area C, location Br, full width half max FWHM
+  % Finite difference / modulation amplitude MA
+  % Additive white Gaussian noise of standard deviation v
+  % FWHM, Br and MA are in the same units as B
+  FWHM_2 = par.FWHM / 2;
+  spec = par.C / FWHM_2 * (LorentzShape((B-par.Br+par.MA/2) ./ FWHM_2) - LorentzShape((B-par.Br-par.MA/2)./FWHM_2))+randn(size(B))*par.v;
+end
+@
+
+Simulated EPR spectra can be generated according to the following example.
+
+<<test_simu.m -write -chunk matlab>>=
+addpath(genpath('Code'))
+Xmt = 100:0.1:120;
+par.C = 2; par.FWHM = 2; par.Br = 110; par.v = 0.01; par.MA = 1;
+spec = LorentzModel_simulate(Xmt,par);
+
+fig=figure();
+plot(Xmt,spec)
+xlabel ('B (mT)');
+ylabel ('Amp (a.u)');
+saveas(fig,'LM_simulate.jpg')
+
+exit
+@
+
+<<matlab -exec shell>>=
+matlab -nodisplay -nodesktop  -r test_simu
+@
+
+<img src="LM_simulate.jpg" width="100%">
+
+
+# Method 2 : Initial parameter estimates
+
+<<LorentzModel_initial.m -write -chunk matlab>>=
+function [parLM] = LorentzModel_initial(B,spec)
+    [y_max, index_max]=max(spec);[y_min, index_min]=min(spec);
+    parLM.Br = (B(index_max)+B(index_min))/2;
+    parLM.FWHM = (B(index_min)-B(index_max))*sqrt(3);
+    parLM.C = 1; parLM.v = 0;
+    parLM.MA = 0.5; % arbitrary initial guess
+    spec_temp = LorentzModel_simulate(B, parLM);
+    parLM.C = spec_temp(:) \ spec(:); % Linear regression
+    parLM.v = std(spec - spec_temp * parLM.C);
+end
+@
+
+
+# Method 3 : MLE parameter estimates
+
+In this section we implement Maximum-Likelihood estimates. We define the likelihood function, but it is never used, as we 
+prefer the least-squares (equivalent) estimate.
+
+<<lnl.m -write -chunk matlab>>=
+function l = lnl(XmT,spec,par)
+    % Likelihood function
+    lnL=@(t)(length(spec)/2)*log(2*pi*t(1)^2)+norm(spec-(t(2)*(2/t(5)^2)*sqrt(2*(1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2)-(1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2+((1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2).^2-4*((XmT-t(3))./t(5)).^2).^(1/2)))./(2*sqrt((1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2+((1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2).^2 - 4*((XmT-t(3))./t(5)).^2).^(1/2))-2).*((1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2+((1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2).^2 -4*((XmT-t(3))./t(5)).^2).^(1/2))-(1+((t(4)/2)/t(5))^2+((XmT-t(3))./t(5)).^2)))) ).^2./(2*t(1)^2);
+    l = lnL([par.v,par.C,par.Br,par.FWHM,par.MA]);
+@
+
+<<LorentzModel_ls.m -write -chunk matlab>>=
+function [parLS] = LorentzModel_ls(XmT,spec,init)
+    % Least-squares estimate
+    f = @(t)(norm(spec - LorentzModel_simulate(XmT,vect_to_par(t))));
+    parLS = vect_to_par(fminsearch(f,par_to_vect(init)));
+    parLS.v = std(spec - LorentzModel_simulate(XmT,parLS));
+end
+
+% Local functions
+
+function [par] = vect_to_par(t)
+% Convert from vector to parameter struct
+par.v = 0; par.C = t(2); par.Br = t(3); par.FWHM = t(4); par.MA = t(5);
+end
+
+function [t] = par_to_vect(par)
+% Convert from parameter struct to vector
+t = [par.v; par.C; par.Br; par.FWHM; par.MA];
+end
+@
+
+We check the estimation code by comparing the resulting estimates with the correct values on a simulated spectrum.
+
+<<test_esti.m -write -chunk matlab>>=
+addpath(genpath('Code'))
+Xmt = 90:0.05:110;
+par.C = 2; par.FWHM=3; par.Br = 101; par.v = 0.01; par.MA = 1;
+par % parameters used in the simulation
+
+spec = LorentzModel_simulate(Xmt,par);
+parInit = LorentzModel_initial(Xmt,spec)
+parMLE = LorentzModel_ls(Xmt,spec,parInit) 
+
+fig=figure();
+spec_mle = LorentzModel_simulate(Xmt,parMLE);
+plot(Xmt,spec, Xmt,spec_mle)
+xlabel ('B (mT)'); ylabel ('Amp (a.u)');
+saveas(fig,'LM_simulate2.jpg')
+exit
+@
+
+<<matlab -exec shell>>=
+date
+matlab -nodisplay -nodesktop  -r test_esti
+
+@
+
+The following figure shows the simulated spectrum and a reconstruction from the estimated parameters.
+
+<img src="LM_simulate2.jpg" width="100%">
+
+
+
+# Method 4 : precision of the parameter estimates
+
+To compute the precision of the parameter estimates, we compute the Cramer-Rao Lower Bound, and use it as an estimate
+of the covariance matrix of the maximum-likelihood estimates. This involves computing the Fisher information matrix,
+and in particular, involves computing the derivatives of the log-likelihood function. 
+
+The computations are performed
+and validated using the `sympy` library for formal calculus in Python in the file `LorentzModel_hessian.nw`. We import
+the resulting formulae and translate them into matlab. Consequently, we will show the python code above the corresponding
+matlab code in this section.
+
+
+## Lorentz mother shape and derived Matlab functions
+
+We first recall the expression of the Lorentz lineshape model.
+
+<<shell -exec shell -chunk shell -output text>>=
+sed -n '464,+3p' Code/LorentzModel_hessian.md
+@
+
+According to `LorentzModel_hessian.nw`, we need to define the following functions in addition to the mother shape:
+<<shell -exec shell -output python>>=
+sed -n '272,+4p' Code/LorentzModel_hessian.md
+@
+
+We use `sympy` to compute the derivatives of the Lorentz mother shape:
+<<shell -output python>>=
+sed -n '473,+16p' Code/LorentzModel_hessian.md
+@
+
+We define these in Matlab as functions that operate on the vector `B` that contains the magnetic field values. 
+In the next section, we define the `ds` and `dms` operators that operate on these functions.
+<<hessian_function_aliases>>=
+Abs   = @(B) LorentzShape(B);
+AbsB  = @(B) -2/pi * B ./ (B.^2 + 1).^2;
+AbsBB = @(B) ( 8/pi * B.^2 - 2/pi * (B.^2 + 1) ) ./ (B.^2 + 1).^3;
+BAbsB = @(B) B .* AbsB(B);
+BAbsBB = @(B) B .* AbsBB(B);
+BBAbsBB = @(B) B.^2 .* AbsB(B);
+@
+
+
+## Translation, scale and finite difference operators
+
+In the Fisher information matrix, we remark that the resulting expressions only involve the following two operators.
+We apply them to the function aliases defined in the previous sections to obtain real-valued vectors.
+
+<<shell -output text>>=
+sed -n '300,+7p' Code/LorentzModel_hessian.md
+@
+
+<<hessian_ds_operators>>=
+ds = @(f) f( (B-par.Br+par.MA/2)/gamma)/gamma - f( (B-par.Br-par.MA/2)/gamma)/gamma;
+dms = @(f) f( (B-par.Br+par.MA/2)/gamma)/gamma/2 + f( (B-par.Br-par.MA/2)/gamma)/gamma/2;
+@
+
+
+## Check
+
+To check that the formulae and operators are correctly implemented, we set some parameters and compute AbsB and AbsBB 
+both in python and matlab, as well as ds(AbsB) and dms(AbsB).
+
+<<shell -exec shell -output python>>=
+sed -n '496,+19p' Code/LorentzModel_hessian.md
+@
+
+<<check1.m -write>>=
+addpath(genpath('Code'))
+B = 3; par.Br = 10; par.MA = 2; gamma = 6;
+<<hessian_function_aliases>>
+<<hessian_ds_operators>>
+AbsB(3) - (-3)/(50*pi)
+AbsBB(3) - 13/(250*pi)
+ds(AbsB) - 193 / (7500*pi)
+dms(AbsB) - 1057 / (15000*pi)
+exit
+@
+
+<<matlab -exec shell>>=
+matlab -nodisplay -nodesktop -r check1
+@
+
+We also check that vectorization works by computing the same quantities when B is a vector. Every result should be equal to 0 up to machine precision.
+
+<<shell -exec shell -output python>>=
+sed -n '520,+19p' Code/LorentzModel_hessian.md
+@
+
+<<check2.m -write>>=
+addpath(genpath('Code'))
+B = [3,5]; par.Br = 10; par.MA = 2; gamma = 6;
+<<hessian_function_aliases>>
+<<hessian_ds_operators>>
+AbsB(B) - [-3/(50*pi), -5/(338*pi)]
+AbsBB(B) - [13/(250*pi), 37/(4394*pi)]
+ds(AbsB) - [193 / (7500*pi), 47/(2028*pi)]
+dms(AbsB) - [1057 / (15000*pi), 385/(4056*pi)]
+exit
+@
+
+<<matlab -exec shell>>=
+matlab -nodisplay -nodesktop -r check2
+@
+
+
+
+
+## Implement the Hessian formulae
+
+The implementation is contained in the `LorentzModelM_mleerror.m` file. Using Lepton, we write this file in several parts,
+starting with the definition of the main function and the parameters, function aliases, and operators.
+<<LorentzModel_mleerror.m -write -chunk matlab>>=
+function prec = LorentzModel_mleerror(B,par)
+  % return the precision estimates as a struct
+  n=length(B); gamma = par.FWHM/2;
+  <<hessian_function_aliases>>
+  <<hessian_ds_operators>>
+  par0 = par; par0.v = 0;
+  EPR=LorentzModel_simulate(B,par0);
+@
+
+We now compute each element of the Hessian matrix. We first import the formula from the python script, then translate them 
+into matlab code and compute the expectation. Let's start with `dv*`. Note that the only random variable here is Y,
+and its expectation is EPR.
+<<shell -exec shell -output python>>=
+sed -n '320,+4p' Code/LorentzModel_hessian.md
+@
+
+<<LorentzModel_mleerror.m -chunk matlab>>=
+dvv = -2*n/par.v^2;
+dvC = 0; dvB = 0; dvM = 0; dvg = 0; 
+@
+
+Next we implement `dC`.
+
+<<shell -exec shell -output python>>=
+sed -n '350,+3p' Code/LorentzModel_hessian.md
+@
+
+<<LorentzModel_mleerror.m -chunk matlab>>=
+dCv = dvC;
+dCC = -1 / par.v^2 * sum(ds(Abs).^2);
+dCB = -1 / par.v^2 / gamma * sum( -EPR .* ds(AbsB));
+dCM =  1 / par.v^2 / gamma * sum( -EPR .* dms(AbsB));
+dCg = -1 / par.v^2 / gamma * sum( -EPR .* (ds(Abs)+ds(BAbsB)));
+@
+
+Next we implement `dB`.
+
+<<shell -exec shell -output python>>=
+sed -n '378,+2p' Code/LorentzModel_hessian.md
+@
+
+<<LorentzModel_mleerror.m -chunk matlab>>=
+dBv = dvB;
+dBC = dCB;
+dBB = -par.C / par.v^2 / gamma^2 * sum( par.C * ds(AbsB).^2 );
+dBM = -par.C / par.v^2 / gamma^2 * sum( -par.C * dms(AbsB) .* ds(AbsB) );
+dBg = -par.C / par.v^2 / gamma^2 * sum( (EPR + par.C*ds(BAbsB)) .* ds(AbsB)  );
+@
+
+Next we implement `dM`.
+<<shell -exec shell -output python>>=
+sed -n '405,+1p' Code/LorentzModel_hessian.md
+@
+
+<<LorentzModel_mleerror.m -chunk matlab>>=
+dMv = dvM;
+dMC = dCM;
+dMB = dBM;
+dMM = par.C / par.v^2 / gamma^2 * sum(-par.C * dms(AbsB).^2 );
+dMg = par.C / par.v^2 / gamma^2 * sum( par.C * (ds(Abs)+ds(BAbsB)) .* dms(AbsB) );
+@
+
+And finally we implement `dg`.
+
+<<shell -exec shell -output python>>=
+sed -n '431p' Code/LorentzModel_hessian.md
+@
+
+<<LorentzModel_mleerror.m -chunk matlab>>=
+dgv = dvg;
+dgC = dCg;
+dgB = dBg;
+dgM = dMg;
+dgg = par.C / par.v^2 / gamma^2 * sum( -par.C*(ds(Abs)+ds(BAbsB)).^2 );
+@
+
+We now assemble the elements of the Hessian matrix and compute the Fisher Information Matrix.
+Note that when condition number is bad, estimates may be very poor due to numerical errors. Set the estimates to -1 in that case.
+<<LorentzModel_mleerror.m -chunk matlab>>=
+hessian = [dvv, dvC, dvB, dvM, dvg; dCv, dCC, dCB, dCM, dCg; dBv, dBC, dBB, dBM, dBg; dMv, dMC, dMB, dMM, dMg; dgv, dgC, dgB, dgM, dgg];
+prec = par;
+if rcond(hessian) > 1e-20
+    cov = inv(-hessian);
+    prec.ev = sqrt(cov(1,1)); prec.eC = sqrt(cov(2,2)); prec.eBr = sqrt(cov(3,3)); prec.eMA = sqrt(cov(4,4)); prec.eFWHM = 2*sqrt(cov(5,5)); 
+else
+    prec.ev = -1; prec.eC = -1; prec.eBr = -1; prec.eMA = -1; prec.eFWHM = -1;
+end
+@
+
+We test this code on a single simulated spectrum. `par_mle` should be close to the correct parameters `par`. 
+In addition, the difference `par-par_mle` should be on the order of `prec_mle`, and `prec_mle` should be close to `prec_mle0` 
+(precision computed from the true parameter values). The same parameters were used as in the previous figures.
+
+<<test_error.m -write>>=
+addpath(genpath('Code'))
+Xmt = 90:0.05:110;
+par.C = 2; par.FWHM=3; par.Br = 101; par.v = 0.01; par.MA = 1;
+par
+spec = LorentzModel_simulate(Xmt,par);
+parInit = LorentzModel_initial(Xmt,spec);
+par_mle = LorentzModel_ls(Xmt,spec,parInit)
+spec_mle = LorentzModel_simulate(Xmt,par_mle);
+prec_mle = LorentzModel_mleerror(Xmt,par_mle)
+prec_mle0 = LorentzModel_mleerror(Xmt,par)
+exit
+@
+
+<<matlab -exec shell>>=
+date
+matlab -nodisplay -nodesktop  -r test_error
+
+@
+
+
+## Simulation test
+
+We check that the precision formulae are correct by computing the observed covariance through simulations. 
+
+<<test_cov.m -write>>=
+addpath(genpath('Code'))
+Xmt = 90:0.05:110;
+par.C = 2; par.FWHM=3; par.Br = 101; par.v = 0.01; par.MA = 1;
+prec = LorentzModel_mleerror(Xmt,par);
+
+nb_iter = 200;
+bench = zeros(nb_iter,5);
+for i = 1:nb_iter
+    spec = LorentzModel_simulate(Xmt,par);
+    parInit = LorentzModel_initial(Xmt,spec);
+    par_mle = LorentzModel_ls(Xmt,spec,parInit);
+    bench(i,1:5) = [par_mle.v par_mle.C par_mle.Br par_mle.MA par_mle.FWHM];
+end
+
+disp(sprintf('Observed means %s, \nExpected means %f %f %f %f %f', sprintf('%f ',mean(bench,1)), par.v, par.C, par.Br, par.MA, par.FWHM))
+
+disp(sprintf('Observed stds %s, \nExpected stds %f %f %f %f %f', sprintf('%f ',std(bench)), prec.ev, prec.eC, prec.eBr, prec.eMA, prec.eFWHM))
+
+
+exit
+@
+
+<<matlab -exec shell>>=
+date
+matlab -nodisplay -nodesktop  -r test_cov
+
+@
+
+
+# Method 5 : convenience function
+
+We provide the following convenience function that performs estimation with default parameters in a single call.
+<<LorentzModel.m -write>>=
+function [parLM] = LorentzModel(XmT, spec, parLM_initial)
+    if ~exist('parLM_initial','var')
+        parLM_initial = LorentzModel_initial  (XmT,spec);
+    end
+    parLM_mle = LorentzModel_ls      (XmT,spec,parLM_initial);
+    parLM = LorentzModel_mleerror (XmT,parLM_mle);
+@
