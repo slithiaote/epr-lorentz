@@ -22,7 +22,7 @@ or
 
 - Instructions for advanced users:
   - You should have a working installation of Matlab. The [Easyspin](https://www.easyspin.org/) toolbox is used to read data from Bruker instruments. No additional toolbox is necessary.
-  - Download the code [here](archive/refs/heads/main.zip), and unzip.
+  - Download the code [here](https://github.com/slithiaote/epr-lorentz/archive/refs/heads/main.zip), and unzip.
   - Add the `plz-out/gen/Code/` directory to your matlab path.
   - The `LorentzModelDeri(B,spec,par_init)` function estimates the parameters of the Lorentz model in derivative limit (see [doc](plz-out/gen/Code/LorentzModelDeri.md) for details).
   - The `LorentzModel(B,spec,par_init)` function estimates the parameters of the general Lorentz model (see [doc](plz-out/gen/Code/LorentzModel.md) for details).

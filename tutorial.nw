@@ -15,7 +15,7 @@ when run with Matlab 2020b on our systems.
 
 - You should have a working installation of Matlab. The [Easyspin](https://www.easyspin.org/) toolbox is used to read 
 data from Bruker instruments. No additional toolbox is necessary.
-- Download the code [here](archive/refs/heads/main.zip), and unzip.
+- Download the code [here](https://github.com/slithiaote/epr-lorentz/archive/refs/heads/main.zip), and unzip.
 - Start matlab in the `plz-out/gen` directory, and add `plz-out/gen/Code` to the matlab path.
 <<bruker.m -write>>=
 % cd 'plz-out/gen' % Uncomment if needed
